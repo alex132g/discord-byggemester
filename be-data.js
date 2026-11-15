@@ -84,6 +84,36 @@ function isoWeek(d) {
 
 const key = (w, y) => y * 100 + w;
 
+// ISO week + weekday ('man'..'fre', or 0-6 with 0 = Monday) -> Date at UTC midnight
+function dateOf(year, week, day) {
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const monday1 = Date.UTC(year, 0, 4 - ((jan4.getUTCDay() + 6) % 7));
+  const idx = typeof day === 'number' ? day : DAYS.indexOf(day);
+  return new Date(monday1 + ((week - 1) * 7 + idx) * 864e5);
+}
+const ymd = d => d.toISOString().slice(0, 10);
+
+// What kind of day a year-plan text describes (used for colours in the calendar)
+function kindOf(text) {
+  if (/ferie/i.test(text)) return 'ferie';
+  if (/ingen teknikfag|^SOP|studietur|idrætsdag/i.test(text)) return 'fri';
+  if (/terminsprøve/i.test(text)) return 'proeve';
+  if (/værksted/i.test(text)) return 'vaerksted';
+  if (/eksamensprojekt/i.test(text)) return 'eksamen';
+  return 'undervisning';
+}
+
+// 'YYYY-MM-DD' -> { text, kind } for every school day in PLAN (Mon/Tue/Fri modules, or Mon-Fri for whole-week rows)
+function planDays() {
+  const days = {};
+  for (const [week, year, man, tir, fre] of PLAN) {
+    const wholeWeek = tir === null && fre === null;
+    const entries = wholeWeek ? [0, 1, 2, 3, 4].map(i => [i, man]) : [[0, man], [1, tir], [4, fre]].filter(([, t]) => t);
+    for (const [i, text] of entries) days[ymd(dateOf(year, week, i))] = { text, kind: kindOf(text) };
+  }
+  return days;
+}
+
 function weekText(week, year) {
   const row = PLAN.find(r => r[0] === week && r[1] === year);
   if (!row) return null;
@@ -133,7 +163,7 @@ function planMessages(list = deadlines()) {
 
 module.exports = {
   PLAN, DAYS, LINKS_TEXT, isoWeek, yearOf, weekText, upcomingDeadlines, uValue, parseLayers,
-  deadlines, saveDeadlines, deadlineLine, planMessages, withEmojis,
+  deadlines, saveDeadlines, deadlineLine, planMessages, withEmojis, dateOf, ymd, kindOf, planDays,
 };
 
 if (require.main === module) {
@@ -158,6 +188,17 @@ if (require.main === module) {
   assert.strictEqual(parseLayers('abc'), null);
   const { U } = uValue([{ mm: 200, lambda: 0.037 }], 0.13, 0.04); // 0.17 + 5.405 = 5.575
   assert(Math.abs(U - 0.1794) < 0.001, U);
+  assert.strictEqual(ymd(dateOf(2026, 46, 'fre')), '2026-11-13');
+  assert.strictEqual(ymd(dateOf(2027, 1, 'tir')), '2027-01-05');
+  assert.strictEqual(ymd(dateOf(2026, 33, 'man')), '2026-08-10');
+  assert.strictEqual(ymd(dateOf(2021, 1, 'man')), '2021-01-04'); // year where Jan 1 is a Friday
+  assert.strictEqual(isoWeek(dateOf(2027, 16, 'fre')).week, 16);
+  assert.strictEqual(kindOf('Efterårsferie'), 'ferie'); assert.strictEqual(kindOf('SOP'), 'fri');
+  assert.strictEqual(kindOf('Værksted (2.–4. modul)'), 'vaerksted');
+  const pd = planDays();
+  assert.strictEqual(pd['2026-10-14'].kind, 'ferie'); // Wednesday in the autumn holiday week
+  assert.strictEqual(pd['2026-11-13'].text, 'Dim. af bærende bygningsdel');
+  assert.strictEqual(pd['2026-11-11'], undefined); // Wednesday: no BE modules
   assert.strictEqual(withEmojis(':hjelm: kl. 12:05–15:45 :ukendt:', { hjelm: '1' }), '<:hjelm:1> kl. 12:05–15:45 :ukendt:');
   const pm = planMessages();
   assert(pm.length >= 2 && pm.every(m => m.length <= 2000), pm.map(m => m.length));

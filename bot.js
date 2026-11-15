@@ -1,10 +1,16 @@
 // Byggemester: keeps the bot online and answers slash commands. Run: node bot.js
-const { Client, GatewayIntentBits, ActivityType, SlashCommandBuilder, PermissionFlagsBits, MessageFlags } = require('discord.js');
+const crypto = require('crypto');
+const {
+  Client, GatewayIntentBits, ActivityType, SlashCommandBuilder, PermissionFlagsBits, MessageFlags,
+  AttachmentBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle,
+  GuildScheduledEventEntityType, GuildScheduledEventPrivacyLevel,
+} = require('discord.js');
 const { DISCORD_TOKEN, DISCORD_GUILD_ID } = require('./.mcp.json').mcpServers.discord.env;
 const {
   LINKS_TEXT, DAYS, isoWeek, yearOf, weekText, upcomingDeadlines, uValue, parseLayers,
-  deadlines, saveDeadlines, deadlineLine, planMessages, withEmojis,
+  deadlines, saveDeadlines, deadlineLine, planMessages, withEmojis, dateOf, ymd,
 } = require('./be-data');
+const { SCHOOL_MONTHS, MONTHS, renderCalendar } = require('./calendar');
 
 // :name: -> the server's custom emoji
 const emo = (guild, text) => withEmojis(text, Object.fromEntries(guild.emojis.cache.map(e => [e.name, e.id])));
@@ -27,6 +33,9 @@ const commands = [
     .addNumberOption(o => o.setName('areal').setDescription('Areal [m²]').setRequired(true).setMinValue(0))
     .addNumberOption(o => o.setName('inde').setDescription('Indetemperatur °C (standard 20)'))
     .addNumberOption(o => o.setName('ude').setDescription('Udetemperatur °C (standard -12)')),
+  new SlashCommandBuilder().setName('kalender').setDescription('Vis kalenderen for en måned (kun synlig for dig)')
+    .addStringOption(o => o.setName('maaned').setDescription('Måned (tom = denne måned)')
+      .addChoices(...SCHOOL_MONTHS.map(([y, m]) => ({ name: `${MONTHS[m]} ${y}`, value: `${y}-${m}` })))),
   // Admin commands: hidden from everyone without Administrator, replies only visible to the admin
   new SlashCommandBuilder().setName('aflevering-ny').setDescription('Admin: tilføj en aflevering')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
@@ -61,19 +70,103 @@ function findDeadline(i) {
   return deadlines().find(d => d.id === id);
 }
 
-// Makes the bot's messages in #årsplan-og-afleveringer match planMessages(): edit, add or remove as needed
+const CAL_VERSION = 1; // bump when the calendar design changes so the image gets redrawn
+const todayCph = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Copenhagen' }); // YYYY-MM-DD
+
+// Makes #årsplan-og-afleveringer = [year calendar image, ...planMessages()]: edit, add or remove the bot's messages.
+// The image message carries a hash of its inputs, so it is only redrawn when the deadlines or the date change.
 async function syncPlanChannel(guild) {
   const ch = guild.channels.cache.find(c => c.name === 'årsplan-og-afleveringer');
   if (!ch) return;
-  const want = planMessages().map(m => emo(guild, m));
+  const today = todayCph(), list = deadlines();
+  const hash = crypto.createHash('sha1').update(JSON.stringify([CAL_VERSION, today, list])).digest('hex').slice(0, 8);
+  const want = [`-# :gantt: Kalenderen opdaterer sig selv · ${hash}`, ...planMessages(list)].map(m => emo(guild, m));
   const mine = [...(await ch.messages.fetch({ limit: 50 })).values()]
     .filter(m => m.author.id === client.user.id && m.type === 0).reverse();
   for (let k = 0; k < Math.max(want.length, mine.length); k++) {
-    if (k < mine.length && k < want.length) { if (mine[k].content !== want[k]) await mine[k].edit({ content: want[k] }); }
-    else if (k < want.length) await ch.send({ content: want[k], allowedMentions: { parse: [] } });
-    else await mine[k].delete();
+    const old = mine[k];
+    if (k === 0) {
+      if (old && old.content === want[0] && old.attachments.size) continue;
+      const files = [new AttachmentBuilder(await renderCalendar({ view: 'year', today, list }), { name: 'kalender.png' })];
+      if (old) await old.edit({ content: want[0], files, attachments: [] });
+      else await ch.send({ content: want[0], files, allowedMentions: { parse: [] } });
+    } else if (old && k < want.length) {
+      if (old.content !== want[k] || old.attachments.size) await old.edit({ content: want[k], attachments: [] });
+    } else if (k < want.length) await ch.send({ content: want[k], allowedMentions: { parse: [] } });
+    else await old.delete();
   }
 }
+
+// Danish wall-clock time on a YYYY-MM-DD date -> Date (handles summer/winter time)
+function cphTime(day, hh, mm) {
+  const guess = new Date(`${day}T${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00Z`);
+  const off = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Copenhagen', timeZoneName: 'shortOffset' })
+    .formatToParts(guess).find(p => p.type === 'timeZoneName').value; // e.g. "GMT+1"
+  return new Date(guess - Number(off.replace('GMT', '') || 0) * 3600e3);
+}
+
+// One Discord event per upcoming deadline, found again via the [aflevering:id] marker in its description
+async function syncEvents(guild) {
+  const now = Date.now(), want = new Map();
+  for (const d of deadlines()) {
+    const day = ymd(dateOf(d.year, d.week, d.day)), end = cphTime(day, 23, 59);
+    if (end <= now) continue;
+    const start = cphTime(day, 8, 0);
+    const body = `:deadline: Aflevering uge ${d.week} (${d.day})${d.links.map(l => `\n${l.name}: ${l.url}`).join('')}`;
+    want.set(`[aflevering:${d.id}]`, {
+      name: `📌 ${d.text}`.slice(0, 100), end, start: start > now + 60e3 ? start : new Date(now + 5 * 60e3),
+      description: `${body.slice(0, 950)}\n\n[aflevering:${d.id}]`.replace(/:deadline: /, '📌 '),
+    });
+  }
+  let made = 0, changed = 0, removed = 0;
+  for (const ev of (await guild.scheduledEvents.fetch()).values()) {
+    const mark = ev.description?.match(/\[aflevering:\d+\]/)?.[0];
+    if (!mark) continue; // not one of ours
+    const w = want.get(mark);
+    want.delete(mark);
+    if (!w) { await ev.delete(); removed++; continue; }
+    if (ev.name !== w.name || ev.description !== w.description || ev.scheduledEndTimestamp !== w.end.getTime()) {
+      await ev.edit({ name: w.name, description: w.description, scheduledEndTime: w.end,
+        ...(ev.isScheduled() && w.start > now ? { scheduledStartTime: w.start } : {}) });
+      changed++;
+    }
+  }
+  for (const w of want.values()) {
+    await guild.scheduledEvents.create({
+      name: w.name, description: w.description, scheduledStartTime: w.start, scheduledEndTime: w.end,
+      privacyLevel: GuildScheduledEventPrivacyLevel.GuildOnly, entityType: GuildScheduledEventEntityType.External,
+      entityMetadata: { location: 'Byggeri & Energi' },
+    });
+    made++;
+  }
+  if (made || changed || removed) console.log(`${new Date().toISOString()} events: +${made} ~${changed} -${removed}`);
+}
+
+// Runs one sync at a time (admin commands and the 30-min timer can overlap)
+let syncing = Promise.resolve();
+const syncAll = guild => (syncing = syncing.then(async () => {
+  await syncPlanChannel(guild).catch(e => console.error('kalender/årsplan fejlede:', e.message));
+  await syncEvents(guild).catch(e => console.error('events fejlede:', e.message));
+}));
+
+// Month calendar reply with ◀ ▶ buttons; key = "YYYY-M" (month index 0-11)
+async function calendarReply(key) {
+  const keys = SCHOOL_MONTHS.map(([y, m]) => `${y}-${m}`);
+  const idx = Math.max(0, keys.indexOf(key));
+  const [y, m] = SCHOOL_MONTHS[idx];
+  const png = await renderCalendar({ view: 'month', month: [y, m], today: todayCph() });
+  const btn = (k, label, id) => new ButtonBuilder().setStyle(ButtonStyle.Secondary).setLabel(label)
+    .setCustomId(k ? `kal:${k}` : `kal:none-${id}`).setDisabled(!k);
+  const prev = keys[idx - 1], next = keys[idx + 1];
+  return {
+    content: '', attachments: [],
+    files: [new AttachmentBuilder(png, { name: `kalender-${y}-${m + 1}.png` })],
+    components: [new ActionRowBuilder().addComponents(
+      btn(prev, `◀ ${prev ? MONTHS[SCHOOL_MONTHS[idx - 1][1]] : ''}`.trim(), 'prev'),
+      btn(next, `${next ? MONTHS[SCHOOL_MONTHS[idx + 1][1]] : ''} ▶`.trim(), 'next'))],
+  };
+}
+const currentMonthKey = () => { const [y, m] = todayCph().split('-').map(Number); return `${y}-${m - 1}`; };
 
 const handlers = {
   uge(i) {
@@ -99,8 +192,7 @@ const handlers = {
       links: url ? [{ name: cleanName(i.options.getString('linknavn'), 'Opgave'), url }] : [],
     };
     saveDeadlines([...list, d]);
-    await syncPlanChannel(i.guild);
-    return eph(`:godkendt: Tilføjet og listen er opdateret:\n${deadlineLine(d)}`);
+    return eph(`:godkendt: Tilføjet – kalender, liste og events opdateres om et øjeblik:\n${deadlineLine(d)}`);
   },
   async 'aflevering-link'(i) {
     const d = findDeadline(i);
@@ -110,15 +202,13 @@ const handlers = {
     const list = deadlines();
     list.find(x => x.id === d.id).links.push({ name: cleanName(i.options.getString('linknavn'), 'Link'), url });
     saveDeadlines(list);
-    await syncPlanChannel(i.guild);
-    return eph(`:godkendt: Link tilføjet og listen er opdateret:\n${deadlineLine(list.find(x => x.id === d.id))}`);
+    return eph(`:godkendt: Link tilføjet – opdateres om et øjeblik:\n${deadlineLine(list.find(x => x.id === d.id))}`);
   },
   async 'aflevering-slet'(i) {
     const d = findDeadline(i);
     if (!d) return eph(':afvist: Fandt ikke afleveringen – vælg den fra listen.');
     saveDeadlines(deadlines().filter(x => x.id !== d.id));
-    await syncPlanChannel(i.guild);
-    return eph(`:afvist: Slettet og listen er opdateret: ${label(d)}`);
+    return eph(`:afvist: Slettet – opdateres om et øjeblik: ${label(d)}`);
   },
   links: () => LINKS_TEXT,
   uvaerdi(i) {
@@ -205,9 +295,12 @@ client.once('clientReady', async () => {
   client.user.setPresence({ activities: [{ name: 'Byggeri & Energi · /uge', type: ActivityType.Watching }], status: 'online' });
   await client.guilds.cache.get(DISCORD_GUILD_ID).commands.set(commands); // guild commands update instantly
   console.log(`${new Date().toISOString()} online som ${client.user.tag}, ${commands.length} commands`);
-  const safeSweep = () => sweep().catch(e => console.error('tjek fejlede:', e.message));
-  safeSweep();
-  setInterval(safeSweep, 30 * 60 * 1000); // every 30 min
+  const every30 = async () => {
+    await sweep().catch(e => console.error('tjek fejlede:', e.message));
+    await syncAll(client.guilds.cache.get(DISCORD_GUILD_ID)); // redraws the calendar when the day changes
+  };
+  every30();
+  setInterval(every30, 30 * 60 * 1000); // every 30 min
 });
 
 client.on('interactionCreate', async i => {
@@ -216,6 +309,18 @@ client.on('interactionCreate', async i => {
     const choices = deadlines().filter(d => label(d).toLowerCase().includes(q)).slice(0, 25)
       .map(d => ({ name: label(d), value: String(d.id) }));
     return i.respond(choices).catch(() => {});
+  }
+  // /kalender and its ◀ ▶ buttons: drawing takes a moment, so defer first (Discord wants an answer within 3 s)
+  const isCalCmd = i.isChatInputCommand() && i.commandName === 'kalender';
+  const isCalBtn = i.isButton() && i.customId.startsWith('kal:');
+  if (isCalCmd || isCalBtn) {
+    try {
+      if (isCalCmd) await i.deferReply({ flags: MessageFlags.Ephemeral }); else await i.deferUpdate();
+      return await i.editReply(await calendarReply(isCalCmd ? (i.options.getString('maaned') ?? currentMonthKey()) : i.customId.slice(4)));
+    } catch (e) {
+      console.error('kalender-kommando fejlede:', e);
+      return i.editReply({ content: emo(i.guild, ':panik: Kunne ikke tegne kalenderen'), files: [], components: [] }).catch(() => {});
+    }
   }
   if (!i.isChatInputCommand() || !handlers[i.commandName]) return;
   // Discord hides admin commands already; check again here so a misconfigured permission can't open them up
@@ -226,6 +331,7 @@ client.on('interactionCreate', async i => {
     const out = await handlers[i.commandName](i);
     const reply = typeof out === 'string' ? { content: out, allowedMentions: { parse: [] } } : out;
     await i.reply({ ...reply, content: emo(i.guild, reply.content) });
+    if (ADMIN_COMMANDS.has(i.commandName)) syncAll(i.guild); // after replying, so the command never times out
   } catch (e) {
     console.error(e);
     if (!i.replied) await i.reply({ content: emo(i.guild, ':panik: Noget gik galt'), flags: MessageFlags.Ephemeral }).catch(() => {});

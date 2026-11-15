@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
-const { LINKS_TEXT, planMessages, withEmojis } = require('./be-data');
+const { LINKS_TEXT, withEmojis } = require('./be-data');
 
 const { DISCORD_TOKEN, DISCORD_GUILD_ID: G } = require('./.mcp.json').mcpServers.discord.env;
 const DRY = process.argv.includes('--dry-run');
@@ -66,8 +66,8 @@ Serveren til **Byggeri & Energi** – noter, tegninger, billeder og snak om opga
 \`/uge\` · \`/afleveringer\` · \`/links\` · \`/uvaerdi\` · \`/varmetab\``,
 LINKS_TEXT.replace(/\n\*Mangler[^\n]*/, '')];
 
-// channel -> messages (the first one is pinned)
-const messagesFor = c => ({ info: infoMessages(c), 'årsplan-og-afleveringer': planMessages() });
+// channel -> messages (the first one is pinned). #årsplan-og-afleveringer is kept up to date by bot.js (calendar image).
+const messagesFor = c => ({ info: infoMessages(c) });
 
 // ---------- Self-check (with worst-case long ids, as emojis and channel links make messages longer) ----------
 const wanted = new Set(LAYOUT.flatMap(c => [c.name, ...c.channels.map(ch => ch.name)]));
