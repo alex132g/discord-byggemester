@@ -8,7 +8,7 @@ const {
 const { DISCORD_TOKEN, DISCORD_GUILD_ID } = require('./.mcp.json').mcpServers.discord.env;
 const {
   LINKS_TEXT, DAYS, isoWeek, yearOf, weekText, upcomingDeadlines, uValue, parseLayers,
-  deadlines, saveDeadlines, deadlineLine, planMessages, withEmojis, dateOf, ymd,
+  deadlines, saveDeadlines, deadlineLine, withEmojis, dateOf, ymd,
 } = require('./be-data');
 const { SCHOOL_MONTHS, MONTHS, renderCalendar } = require('./calendar');
 
@@ -73,14 +73,15 @@ function findDeadline(i) {
 const CAL_VERSION = 1; // bump when the calendar design changes so the image gets redrawn
 const todayCph = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Copenhagen' }); // YYYY-MM-DD
 
-// Makes #årsplan-og-afleveringer = [year calendar image, ...planMessages()]: edit, add or remove the bot's messages.
+// Makes #årsplan-og-afleveringer contain only the year calendar image (with controls); removes older bot messages.
 // The image message carries a hash of its inputs, so it is only redrawn when the deadlines or the date change.
 async function syncPlanChannel(guild) {
   const ch = guild.channels.cache.find(c => c.name === 'årsplan-og-afleveringer');
   if (!ch) return;
   const today = todayCph(), list = deadlines();
   const hash = crypto.createHash('sha1').update(JSON.stringify([CAL_VERSION, today, list])).digest('hex').slice(0, 8);
-  const want = [`-# :gantt: Kalenderen opdaterer sig selv · ${hash}`, ...planMessages(list)].map(m => emo(guild, m));
+  // only the calendar: any older text messages from the bot are removed by the loop below
+  const want = [`-# :gantt: Kalenderen opdaterer sig selv · ${hash}`].map(m => emo(guild, m));
   const mine = [...(await ch.messages.fetch({ limit: 50 })).values()]
     .filter(m => m.author.id === client.user.id && m.type === 0).reverse();
   for (let k = 0; k < Math.max(want.length, mine.length); k++) {
@@ -169,7 +170,8 @@ function calendarControls(guild) {
     new ActionRowBuilder().addComponents(
       button('kalpub:now', 'Denne måned', 'gantt', ButtonStyle.Primary),
       button('kalpub:week', 'Denne uge', 'tegning'),
-      button('kalpub:next', 'Næste aflevering', 'deadline', ButtonStyle.Danger)),
+      button('kalpub:next', 'Næste aflevering', 'deadline', ButtonStyle.Danger),
+      button('kalpub:all', 'Alle afleveringer', 'godkendt')),
   ];
 }
 
@@ -189,6 +191,13 @@ async function calendarPublicAnswer(i) {
     const plan = weekText(now.week, now.year) ?? `**Uge ${now.week}:** står ikke på årsplanen`;
     const dueTxt = due.length ? `\n\n## :deadline: Afleveringer denne uge\n${due.map(deadlineLine).join('\n')}` : '\n\n:godkendt: Ingen afleveringer denne uge';
     return { content: `## :tegning: Denne uge\n${plan}${dueTxt}` };
+  }
+  if (what === 'all') {
+    const list = deadlines(), up = list.filter(d => daysUntil(dateOf(d.year, d.week, d.day)) >= 0);
+    const done = list.length - up.length;
+    // max 20 lines so the message stays under Discord's 2000 characters, even with links and emojis
+    return { content: `## :deadline: Kommende afleveringer\n${up.length ? up.slice(0, 20).map(deadlineLine).join('\n') : ':grin: Ingen flere!'}`
+      + (up.length > 20 ? `\n-# …og ${up.length - 20} mere` : '') + (done ? `\n\n-# :godkendt: ${done} afleveringer er allerede overstået` : '') };
   }
   if (what === 'next') {
     const [d] = upcomingDeadlines(new Date(), 50).filter(x => daysUntil(dateOf(x.year, x.week, x.day)) >= 0);

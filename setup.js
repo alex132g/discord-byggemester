@@ -24,7 +24,7 @@ const REMOVE_ROLES = ['BE-klassen'];
 const LAYOUT = [
   { name: '📌 INFO', readOnly: true, channels: [
     { name: 'info', topic: ':byggemester: Grupper, links og hvordan serveren bruges.' },
-    { name: 'årsplan-og-afleveringer', topic: ':gantt: Hele årsplanen 26-27 og alle afleveringer. /uge og /afleveringer virker også.' },
+    { name: 'årsplan-og-afleveringer', topic: ':gantt: Kalender over skoleåret 26-27 – brug knapperne under den for måned, uge og afleveringer.' },
     { name: 'medlemmer', topic: ':hjelm: Byggemester byder nye medlemmer velkommen her' },
   ]},
   { name: '💬 FÆLLES', channels: [
@@ -59,7 +59,7 @@ Serveren til **Byggeri & Energi** – noter, tegninger, billeder og snak om opga
 :deadline: <#${c.opgaver}> – spørgsmål om opgaver og afleveringer
 :laptop: <#${c['filer-og-billeder']}> – billeder, tegninger, Revit og PDF (maks 10 MB, ellers OneDrive-link)
 :vaerktoejskasse: <#${c.billeder}> · <#${c.tegninger}> – alt fra værkstedsugen
-:gantt: <#${c['årsplan-og-afleveringer']}> – hele årsplanen og alle deadlines
+:gantt: <#${c['årsplan-og-afleveringer']}> – kalender med alle deadlines (klik på knapperne)
 :kaffepause: **Voice** – Snak 1/2 til gruppearbejde, Skærmdeling til Revit
 
 ## :lommeregner: Bot-kommandoer
