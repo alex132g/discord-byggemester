@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
-const { LINKS_TEXT } = require('./be-data');
+const { LINKS_TEXT, planMessages } = require('./be-data');
 
 const { DISCORD_TOKEN, DISCORD_GUILD_ID: G } = require('./.mcp.json').mcpServers.discord.env;
 const DRY = process.argv.includes('--dry-run');
@@ -22,12 +22,18 @@ const REMOVE_ROLES = ['BE-klassen'];
 
 const LAYOUT = [
   { name: '📌 INFO', readOnly: true, channels: [
-    { name: 'info', topic: 'Grupper, links og hvordan serveren bruges. Skriv /uge eller /afleveringer for årsplanen.' },
+    { name: 'info', topic: 'Grupper, links og hvordan serveren bruges.' },
+    { name: 'årsplan-og-afleveringer', topic: 'Hele årsplanen 26-27 og alle afleveringer. /uge og /afleveringer virker også.' },
+    { name: 'medlemmer', topic: 'Byggemester byder nye medlemmer velkommen her 🏗️' },
   ]},
   { name: '💬 FÆLLES', channels: [
     { name: 'general', topic: 'Snak om alt.' },
     { name: 'opgaver', topic: 'Spørgsmål og koordinering om opgaver og afleveringer - skriv hvilket modul det drejer sig om.' },
     { name: 'filer-og-billeder', topic: 'Billeder, skitser, Revit-filer og PDF\'er. Maks 10 MB - større filer som OneDrive-link.' },
+  ]},
+  { name: '🔨 VÆRKSTEDSUGE', channels: [
+    { name: 'billeder', topic: 'Billeder fra værkstedsugen.' },
+    { name: 'tegninger', topic: 'Tegninger og materialelister til værkstedsugen.' },
   ]},
   { name: '🔊 VOICE', channels: [
     { name: 'Snak 1', type: VOICE },
@@ -48,14 +54,23 @@ Server til **Byggeri & Energi**.
 • **#filer-og-billeder** – billeder, tegninger, Revit og PDF (maks 10 MB, ellers OneDrive-link)
 • **Voice** – Snak 1/2 til gruppearbejde, Skærmdeling til Revit
 
+• **Værkstedsuge** – billeder og tegninger fra værkstedet
+• **#årsplan-og-afleveringer** – hele årsplanen og alle deadlines
+
 **Bot-kommandoer:** \`/uge\` · \`/afleveringer\` · \`/links\` · \`/uvaerdi\` · \`/varmetab\`
 
 ${LINKS_TEXT.replace(/\n\*Mangler[^\n]*/, '')}`;
 
+// channel -> messages posted (into an empty channel only); the first one is pinned
+const MESSAGES = { info: [INFO_MESSAGE], 'årsplan-og-afleveringer': planMessages() };
+
 // ---------- Self-check ----------
 const wanted = new Set(LAYOUT.flatMap(c => [c.name, ...c.channels.map(ch => ch.name)]));
 assert.strictEqual(wanted.size, LAYOUT.length + LAYOUT.reduce((n, c) => n + c.channels.length, 0), 'duplicate channel names');
-assert(INFO_MESSAGE.length <= 2000, `info message too long (${INFO_MESSAGE.length})`);
+for (const [k, msgs] of Object.entries(MESSAGES)) {
+  assert(wanted.has(k), `message target #${k} missing`);
+  for (const m of msgs) assert(m.length <= 2000, `message for #${k} too long (${m.length})`);
+}
 
 // ---------- API ----------
 async function api(method, p, body) {
@@ -98,7 +113,7 @@ const hasHumanMessages = async id => (await api('GET', `/channels/${id}/messages
   // Categories + channels
   let channels = await api('GET', `/guilds/${G}/channels`);
   const keep = new Set();
-  let infoId;
+  const ids = {};
   for (const [ci, cat] of LAYOUT.entries()) {
     const overwrites = cat.readOnly ? [{ id: G, type: 0, allow: '0', deny: String(READ_ONLY) }] : [];
     let catCh = channels.find(x => x.type === CATEGORY && x.name.toUpperCase() === cat.name.toUpperCase());
@@ -115,7 +130,7 @@ const hasHumanMessages = async id => (await api('GET', `/channels/${id}/messages
       if (!c) { c = await api('POST', `/guilds/${G}/channels`, { ...body, type }); console.log('    +', ch.name); }
       else { await api('PATCH', `/channels/${c.id}`, body); console.log('    =', ch.name); }
       keep.add(c.id);
-      if (ch.name === 'info') infoId = c.id;
+      ids[ch.name] = c.id;
     }
   }
 
@@ -129,13 +144,27 @@ const hasHumanMessages = async id => (await api('GET', `/channels/${id}/messages
     console.log('  - slettet', c.name);
   }
 
-  // Info message (only into an empty channel), pinned
-  const existing = DRY && String(infoId).startsWith('dry') ? [] : await api('GET', `/channels/${infoId}/messages?limit=1`);
-  if (existing.length) console.log('  = besked findes allerede i info');
-  else {
-    const m = await api('POST', `/channels/${infoId}/messages`, { content: INFO_MESSAGE, allowed_mentions: { parse: [] } });
-    await api('PUT', `/channels/${infoId}/pins/${m.id}`);
-    console.log('  + besked i info');
+  // Messages: post into empty channels (first one pinned), or edit our own messages in place if the text changed
+  for (const [name, msgs] of Object.entries(MESSAGES)) {
+    const id = ids[name];
+    const existing = String(id).startsWith('dry') ? [] : (await api('GET', `/channels/${id}/messages?limit=20`))
+      .filter(m => m.type === 0).reverse(); // oldest first, skip "pinned a message" notices
+    if (existing.length) {
+      if (existing.length !== msgs.length || existing.some(m => m.author.id !== existing[0].author.id)) {
+        console.log('  ! rører ikke', name, '(andre beskeder i kanalen)'); continue;
+      }
+      let changed = 0;
+      for (const [i, m] of existing.entries()) {
+        if (m.content !== msgs[i]) { await api('PATCH', `/channels/${id}/messages/${m.id}`, { content: msgs[i] }); changed++; }
+      }
+      console.log(changed ? '  ~ opdateret' : '  = uændret', name);
+      continue;
+    }
+    for (const [i, content] of msgs.entries()) {
+      const m = await api('POST', `/channels/${id}/messages`, { content, allowed_mentions: { parse: [] } });
+      if (i === 0) await api('PUT', `/channels/${id}/pins/${m.id}`);
+    }
+    console.log('  + beskeder i', name);
   }
 
   await api('PUT', `/guilds/${G}/members/${OWNER_ID}/roles/${role['Gruppe 1']}`);
@@ -143,6 +172,11 @@ const hasHumanMessages = async id => (await api('GET', `/channels/${id}/messages
   // Server icon + bot identity (only if missing; username changes are rate limited)
   const guild = await api('GET', `/guilds/${G}`);
   if (!guild.icon) { await api('PATCH', `/guilds/${G}`, { icon: png('server-icon.png') }); console.log('  + server-ikon'); }
+  // bot.js welcomes new members in #medlemmer, so turn off Discord's own join messages (flag 1)
+  if (!(guild.system_channel_flags & 1)) {
+    await api('PATCH', `/guilds/${G}`, { system_channel_flags: guild.system_channel_flags | 1 });
+    console.log('  + Discords egne join-beskeder slået fra');
+  }
   const me = await api('GET', '/users/@me');
   if (me.username !== 'Byggemester' || !me.avatar) {
     await api('PATCH', '/users/@me', { username: 'Byggemester', avatar: png('bot-avatar.png') });
@@ -151,7 +185,7 @@ const hasHumanMessages = async id => (await api('GET', `/channels/${id}/messages
 
   // Invite link to #info
   const invites = await api('GET', `/guilds/${G}/invites`);
-  const inv = invites.find(i => i.channel?.id === infoId)
-    || await api('POST', `/channels/${infoId}/invites`, { max_age: 604800, unique: false });
+  const inv = invites.find(i => i.channel?.id === ids.info)
+    || await api('POST', `/channels/${ids.info}/invites`, { max_age: 604800, unique: false });
   console.log('\nInvite-link:', DRY ? '(dry run)' : `https://discord.gg/${inv.code}`);
 })().catch(e => { console.error('FEJL:', e.message); process.exit(1); });

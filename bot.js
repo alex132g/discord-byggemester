@@ -53,7 +53,33 @@ const handlers = {
   },
 };
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const WELCOMES = [
+  '🏗️ {u} er lige landet på byggepladsen! Husk sikkerhedshjelmen.',
+  '🧱 Nyt fundament er støbt: {u} er med! Serverens U-værdi er lige blevet bedre.',
+  '⚡ {u} er tilsluttet nettet – energirammen er stadig overholdt.',
+  '📐 {u} er tegnet ind på plantegningen. Velkommen!',
+  '🔨 Byggemester melder: {u} er mødt op. Hent en hammer og find en stige!',
+  '🪵 {u} er spærret inde hos os nu. Der er ingen vej ud. Velkommen! 🏠',
+  '🌡️ Varmetabet faldt lige: {u} er kommet ind i varmen!',
+  '🦺 Hjelm på, {u}! Du er nu officielt en del af byggeholdet.',
+  '📏 {u} er målt op og godkendt efter BR18. Velkommen indenfor!',
+  '🚧 Pas på! {u} er kørt ind på byggepladsen med fuld fart.',
+];
+const welcomeText = (userId, rnd = Math.random()) =>
+  WELCOMES[Math.floor(rnd * WELCOMES.length)].replace('{u}', `<@${userId}>`);
+
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
+
+client.on('guildMemberAdd', async member => {
+  if (member.user.bot) return;
+  const ch = member.guild.channels.cache.find(c => c.name === 'medlemmer');
+  const info = member.guild.channels.cache.find(c => c.name === 'info');
+  if (!ch) return console.error('kanal #medlemmer mangler');
+  await ch.send({
+    content: `${welcomeText(member.id)}\nFind din gruppe i ${info ?? '#info'} og sig hej i #general 👋`,
+    allowedMentions: { users: [member.id] },
+  }).catch(e => console.error('velkomst fejlede:', e.message));
+});
 
 client.once('clientReady', async () => {
   client.user.setPresence({ activities: [{ name: 'Byggeri & Energi · /uge', type: ActivityType.Watching }], status: 'online' });

@@ -102,7 +102,24 @@ function parseLayers(str) {
   return layers;
 }
 
-module.exports = { PLAN, DEADLINES, LINKS_TEXT, isoWeek, weekText, upcomingDeadlines, uValue, parseLayers };
+// Whole year plan + deadlines as Discord messages (each <= 2000 chars)
+function planMessages() {
+  const head = '# 📅 Årsplan og afleveringer 26-27\n*Mandag 12:05–15:45 · Tirsdag 12:05–13:50 · Fredag 9:55–13:50 · Ret til overraskelser forbeholdes*\n\n'
+    + '## 🔴 Afleveringer\n' + DEADLINES.map(([w, , day, text]) => `• **Uge ${w} ${day}:** ${text}`).join('\n')
+    + '\n\n*Skriv `/uge` for denne uge eller `/afleveringer` for de næste.*';
+  const lines = PLAN.map(([w, , man, tir, fre]) => tir === null && fre === null
+    ? `**Uge ${w}:** ${man}` : `**Uge ${w}:** man: ${man} · tir: ${tir ?? '—'} · fre: ${fre ?? '—'}`);
+  const msgs = [head];
+  let cur = '## 🗓️ Uge for uge';
+  for (const l of lines) {
+    if ((cur + '\n' + l).length > 1900) { msgs.push(cur); cur = ''; }
+    cur += (cur ? '\n' : '') + l;
+  }
+  msgs.push(cur);
+  return msgs;
+}
+
+module.exports = { PLAN, DEADLINES, LINKS_TEXT, isoWeek, weekText, upcomingDeadlines, uValue, parseLayers, planMessages };
 
 if (require.main === module) {
   const assert = require('assert');
@@ -116,5 +133,8 @@ if (require.main === module) {
   assert.strictEqual(parseLayers('abc'), null);
   const { U } = uValue([{ mm: 200, lambda: 0.037 }], 0.13, 0.04); // 0.17 + 5.405 = 5.575
   assert(Math.abs(U - 0.1794) < 0.001, U);
+  const pm = planMessages();
+  assert(pm.length >= 2 && pm.every(m => m.length <= 2000), pm.map(m => m.length));
+  assert.strictEqual(pm.join('\n').match(/\*\*Uge \d+:\*\*/g).length, PLAN.length); // every week is included once
   console.log('be-data ok');
 }
