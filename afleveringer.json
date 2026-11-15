@@ -40,6 +40,19 @@
     "links": []
   },
   {
+    "id": 11,
+    "week": 48,
+    "year": 2026,
+    "day": "fre",
+    "text": "Billeder af værkstedsarbejdet",
+    "links": [
+      {
+        "name": "LINK",
+        "url": "https://learn.sde.dk/mod/assign/view.php?id=1773068"
+      }
+    ]
+  },
+  {
     "id": 6,
     "week": 1,
     "year": 2027,
@@ -78,5 +91,18 @@
     "day": "man",
     "text": "Terminsprøve",
     "links": []
+  },
+  {
+    "id": 12,
+    "week": 48,
+    "year": 2026,
+    "day": "fre",
+    "text": "Kvalitetssikring af værkstedsarbjede",
+    "links": [
+      {
+        "name": "LINK",
+        "url": "https://learn.sde.dk/mod/assign/view.php?id=1773069"
+      }
+    ]
   }
 ]

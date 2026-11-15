@@ -60,14 +60,18 @@ function saveDeadlines(list) {
 const deadlineLine = d => `• **Uge ${d.week} ${d.day}:** ${d.text}`
   + d.links.map(l => ` · [${l.name}](<${l.url}>)`).join('');
 
-const LINKS_TEXT = `## 🔗 Links
-• **BR18 – Bygningsreglementet:** https://bygningsreglementet.dk
-• **Revit (gratis studielicens):** https://www.autodesk.com/education/edu-software/overview
-• **Gantt Project (tidsplaner):** https://www.ganttproject.biz
-• **Anvisninger (BUILD/SBi):** https://anvisninger.dk – den side vi bruger til anvisninger 🔒
-• **Træindex (gratis træbøger):** https://træindex.dk 🔒
+// Texts use :name: for the server's custom emojis; withEmojis() turns them into <:name:id> before sending
+const LINKS_TEXT = `## :laptop: Links
+:hus: **BR18 – Bygningsreglementet:** https://bygningsreglementet.dk
+:model3d: **Revit (gratis studielicens):** https://www.autodesk.com/education/edu-software/overview
+:gantt: **Gantt Project (tidsplaner):** https://www.ganttproject.biz
+:tegning: **Anvisninger (BUILD/SBi):** https://anvisninger.dk – den side vi bruger til anvisninger 🔒
+:planke: **Træindex (gratis træbøger):** https://træindex.dk 🔒
 🔒 = kræver at du er på **skolens VPN**
 *Mangler der et link (fx weblager eller kursussiden)? Skriv det i #general.*`;
+
+// ids: { emojiName: emojiId }; unknown names are left as plain text
+const withEmojis = (text, ids) => text.replace(/:(\w{2,32}):/g, (m, name) => (ids[name] ? `<:${name}:${ids[name]}>` : m));
 
 // ISO 8601 week number + week-year
 function isoWeek(d) {
@@ -119,17 +123,17 @@ function planMessages(list = deadlines()) {
   const weeks = PLAN.map(([w, , man, tir, fre]) => tir === null && fre === null
     ? `**Uge ${w}:** ${man}` : `**Uge ${w}:** man: ${man} · tir: ${tir ?? '—'} · fre: ${fre ?? '—'}`);
   return [
-    ...chunk(['# 📅 Årsplan og afleveringer 26-27',
+    ...chunk(['# :gantt: Årsplan og afleveringer 26-27',
       '*Mandag 12:05–15:45 · Tirsdag 12:05–13:50 · Fredag 9:55–13:50 · Ret til overraskelser forbeholdes*', '',
-      '## 🔴 Afleveringer', ...(list.length ? list.map(deadlineLine) : ['Ingen afleveringer endnu.']), '',
-      '*Skriv `/uge` for denne uge eller `/afleveringer` for de næste.*']),
-    ...chunk(['## 🗓️ Uge for uge', ...weeks]),
+      '## :deadline: Afleveringer', ...(list.length ? list.map(deadlineLine) : ['Ingen afleveringer endnu.']), '',
+      '*Skriv `/uge` for denne uge eller `/afleveringer` for de næste.* :ide:']),
+    ...chunk(['## :tegning: Uge for uge', ...weeks]),
   ];
 }
 
 module.exports = {
   PLAN, DAYS, LINKS_TEXT, isoWeek, yearOf, weekText, upcomingDeadlines, uValue, parseLayers,
-  deadlines, saveDeadlines, deadlineLine, planMessages,
+  deadlines, saveDeadlines, deadlineLine, planMessages, withEmojis,
 };
 
 if (require.main === module) {
@@ -139,7 +143,8 @@ if (require.main === module) {
   assert.deepStrictEqual(isoWeek(new Date(2021, 0, 1)), { week: 53, year: 2020 });
   assert.match(weekText(46, 2026), /bærende/);
   assert.strictEqual(weekText(30, 2026), null);
-  assert.strictEqual(upcomingDeadlines(new Date(2026, 10, 15))[0].text, 'Oplæg til teknikfagspræsentation');
+  // live data changes via /aflevering-ny, so only check that upcoming deadlines are from week 46 2026 onwards
+  assert(upcomingDeadlines(new Date(2026, 10, 15)).every(d => key(d.week, d.year) >= key(46, 2026)));
   assert.strictEqual(yearOf(46), 2026); assert.strictEqual(yearOf(6), 2027);
   assert.strictEqual(deadlineLine({ week: 1, day: 'tir', text: 'X', links: [{ name: 'Opgave', url: 'https://a.dk/b' }] }),
     '• **Uge 1 tir:** X · [Opgave](<https://a.dk/b>)');
@@ -153,6 +158,7 @@ if (require.main === module) {
   assert.strictEqual(parseLayers('abc'), null);
   const { U } = uValue([{ mm: 200, lambda: 0.037 }], 0.13, 0.04); // 0.17 + 5.405 = 5.575
   assert(Math.abs(U - 0.1794) < 0.001, U);
+  assert.strictEqual(withEmojis(':hjelm: kl. 12:05–15:45 :ukendt:', { hjelm: '1' }), '<:hjelm:1> kl. 12:05–15:45 :ukendt:');
   const pm = planMessages();
   assert(pm.length >= 2 && pm.every(m => m.length <= 2000), pm.map(m => m.length));
   assert.strictEqual(pm.join('\n').match(/\*\*Uge \d+:\*\*/g).length, PLAN.length); // every week is included once

@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
-const { LINKS_TEXT, planMessages } = require('./be-data');
+const { LINKS_TEXT, planMessages, withEmojis } = require('./be-data');
 
 const { DISCORD_TOKEN, DISCORD_GUILD_ID: G } = require('./.mcp.json').mcpServers.discord.env;
 const DRY = process.argv.includes('--dry-run');
@@ -23,18 +23,18 @@ const REMOVE_ROLES = ['BE-klassen'];
 
 const LAYOUT = [
   { name: '📌 INFO', readOnly: true, channels: [
-    { name: 'info', topic: 'Grupper, links og hvordan serveren bruges.' },
-    { name: 'årsplan-og-afleveringer', topic: 'Hele årsplanen 26-27 og alle afleveringer. /uge og /afleveringer virker også.' },
-    { name: 'medlemmer', topic: 'Byggemester byder nye medlemmer velkommen her 🏗️' },
+    { name: 'info', topic: ':byggemester: Grupper, links og hvordan serveren bruges.' },
+    { name: 'årsplan-og-afleveringer', topic: ':gantt: Hele årsplanen 26-27 og alle afleveringer. /uge og /afleveringer virker også.' },
+    { name: 'medlemmer', topic: ':hjelm: Byggemester byder nye medlemmer velkommen her' },
   ]},
   { name: '💬 FÆLLES', channels: [
-    { name: 'general', topic: 'Snak om alt.' },
-    { name: 'opgaver', topic: 'Spørgsmål og koordinering om opgaver og afleveringer - skriv hvilket modul det drejer sig om.' },
-    { name: 'filer-og-billeder', topic: 'Billeder, skitser, Revit-filer og PDF\'er. Maks 10 MB - større filer som OneDrive-link.' },
+    { name: 'general', topic: ':grin: Snak om alt.' },
+    { name: 'opgaver', topic: ':deadline: Spørgsmål og koordinering om opgaver og afleveringer - skriv hvilket modul det drejer sig om.' },
+    { name: 'filer-og-billeder', topic: ':laptop: Billeder, skitser, Revit-filer og PDF\'er. Maks 10 MB - større filer som OneDrive-link.' },
   ]},
   { name: '🔨 VÆRKSTEDSUGE', channels: [
-    { name: 'billeder', topic: 'Billeder fra værkstedsugen.' },
-    { name: 'tegninger', topic: 'Tegninger og materialelister til værkstedsugen.' },
+    { name: 'billeder', topic: ':hammer: Billeder fra værkstedsugen.' },
+    { name: 'tegninger', topic: ':tegning: Tegninger og materialelister til værkstedsugen.' },
   ]},
   { name: '🔊 VOICE', channels: [
     { name: 'Snak 1', type: VOICE },
@@ -42,38 +42,42 @@ const LAYOUT = [
     { name: '🖥️ Skærmdeling – Revit', type: VOICE },
   ]},
   { name: '🔒 ADMIN', private: true, channels: [
-    { name: 'admin', topic: 'Kun for admin. /aflevering-ny · /aflevering-link · /aflevering-slet (svar er kun synlige for dig).' },
+    { name: 'admin', topic: ':vaerktoejskasse: Kun for admin. /aflevering-ny · /aflevering-link · /aflevering-slet (svar er kun synlige for dig).' },
   ]},
 ];
 
-const INFO_MESSAGE = `# Velkommen til BYG OG HYG 🏗️⚡
-Server til **Byggeri & Energi**.
+// c = { channelName: id } so the message can link the channels; :name: = custom emoji
+const infoMessages = c => [`# :byggemester: Velkommen til BYG OG HYG!
+Serveren til **Byggeri & Energi** – noter, tegninger, billeder og snak om opgaver. :hjelm:
 
-🟧 **Gruppe 1:** Alexander, Niels, Marcus
-🟦 **Gruppe 2:** Sohib, Royar, William
+## :vest: Grupperne
+:hammer: **Gruppe 1:** Alexander, Niels, Marcus
+:sav: **Gruppe 2:** Sohib, Royar, William
 
-**Hvor skal det hen?**
-• **#general** – snak om alt
-• **#opgaver** – spørgsmål om opgaver og afleveringer
-• **#filer-og-billeder** – billeder, tegninger, Revit og PDF (maks 10 MB, ellers OneDrive-link)
-• **Voice** – Snak 1/2 til gruppearbejde, Skærmdeling til Revit
+## :tegning: Hvor skal det hen?
+:grin: <#${c.general}> – snak om alt
+:deadline: <#${c.opgaver}> – spørgsmål om opgaver og afleveringer
+:laptop: <#${c['filer-og-billeder']}> – billeder, tegninger, Revit og PDF (maks 10 MB, ellers OneDrive-link)
+:vaerktoejskasse: <#${c.billeder}> · <#${c.tegninger}> – alt fra værkstedsugen
+:gantt: <#${c['årsplan-og-afleveringer']}> – hele årsplanen og alle deadlines
+:kaffepause: **Voice** – Snak 1/2 til gruppearbejde, Skærmdeling til Revit
 
-• **Værkstedsuge** – billeder og tegninger fra værkstedet
-• **#årsplan-og-afleveringer** – hele årsplanen og alle deadlines
+## :lommeregner: Bot-kommandoer
+\`/uge\` · \`/afleveringer\` · \`/links\` · \`/uvaerdi\` · \`/varmetab\``,
+LINKS_TEXT.replace(/\n\*Mangler[^\n]*/, '')];
 
-**Bot-kommandoer:** \`/uge\` · \`/afleveringer\` · \`/links\` · \`/uvaerdi\` · \`/varmetab\`
+// channel -> messages (the first one is pinned)
+const messagesFor = c => ({ info: infoMessages(c), 'årsplan-og-afleveringer': planMessages() });
 
-${LINKS_TEXT.replace(/\n\*Mangler[^\n]*/, '')}`;
-
-// channel -> messages posted (into an empty channel only); the first one is pinned
-const MESSAGES = { info: [INFO_MESSAGE], 'årsplan-og-afleveringer': planMessages() };
-
-// ---------- Self-check ----------
+// ---------- Self-check (with worst-case long ids, as emojis and channel links make messages longer) ----------
 const wanted = new Set(LAYOUT.flatMap(c => [c.name, ...c.channels.map(ch => ch.name)]));
 assert.strictEqual(wanted.size, LAYOUT.length + LAYOUT.reduce((n, c) => n + c.channels.length, 0), 'duplicate channel names');
-for (const [k, msgs] of Object.entries(MESSAGES)) {
-  assert(wanted.has(k), `message target #${k} missing`);
-  for (const m of msgs) assert(m.length <= 2000, `message for #${k} too long (${m.length})`);
+{
+  const longId = '1'.repeat(20), anyName = new Proxy({}, { get: () => longId });
+  for (const [k, msgs] of Object.entries(messagesFor(anyName))) {
+    assert(wanted.has(k), `message target #${k} missing`);
+    for (const m of msgs) assert(withEmojis(m, anyName).length <= 2000, `message for #${k} too long`);
+  }
 }
 
 // ---------- API ----------
@@ -114,6 +118,9 @@ const hasHumanMessages = async id => (await api('GET', `/channels/${id}/messages
     if (found) { await api('DELETE', `/guilds/${G}/roles/${found.id}`); console.log('  - rolle', name); }
   }
 
+  const emojiIds = Object.fromEntries((await api('GET', `/guilds/${G}/emojis`)).map(e => [e.name, e.id]));
+  const emo = text => withEmojis(text, emojiIds);
+
   // Categories + channels
   let channels = await api('GET', `/guilds/${G}/channels`);
   const keep = new Set();
@@ -131,7 +138,7 @@ const hasHumanMessages = async id => (await api('GET', `/channels/${id}/messages
       const type = ch.type ?? TEXT;
       let c = channels.find(x => x.name === ch.name && x.type === type);
       const body = { name: ch.name, position: i, parent_id: catCh.id, permission_overwrites: overwrites };
-      if (ch.topic) body.topic = ch.topic;
+      if (ch.topic) body.topic = emo(ch.topic);
       if (!c) { c = await api('POST', `/guilds/${G}/channels`, { ...body, type }); console.log('    +', ch.name); }
       else { await api('PATCH', `/channels/${c.id}`, body); console.log('    =', ch.name); }
       keep.add(c.id);
@@ -149,27 +156,25 @@ const hasHumanMessages = async id => (await api('GET', `/channels/${id}/messages
     console.log('  - slettet', c.name);
   }
 
-  // Messages: post into empty channels (first one pinned), or edit our own messages in place if the text changed
-  for (const [name, msgs] of Object.entries(MESSAGES)) {
-    const id = ids[name];
-    const existing = String(id).startsWith('dry') ? [] : (await api('GET', `/channels/${id}/messages?limit=20`))
+  // Messages: make the bot's own messages match (edit in place, add or remove at the end); first one pinned.
+  // Channels with messages from anyone else are left alone.
+  const self = await api('GET', '/users/@me');
+  for (const [name, raw] of Object.entries(messagesFor(ids))) {
+    const id = ids[name], msgs = raw.map(emo);
+    const existing = String(id).startsWith('dry') ? [] : (await api('GET', `/channels/${id}/messages?limit=50`))
       .filter(m => m.type === 0).reverse(); // oldest first, skip "pinned a message" notices
-    if (existing.length) {
-      if (existing.length !== msgs.length || existing.some(m => m.author.id !== existing[0].author.id)) {
-        console.log('  ! rører ikke', name, '(andre beskeder i kanalen)'); continue;
-      }
-      let changed = 0;
-      for (const [i, m] of existing.entries()) {
-        if (m.content !== msgs[i]) { await api('PATCH', `/channels/${id}/messages/${m.id}`, { content: msgs[i] }); changed++; }
-      }
-      console.log(changed ? '  ~ opdateret' : '  = uændret', name);
-      continue;
+    if (existing.some(m => m.author.id !== self.id)) { console.log('  ! rører ikke', name, '(andres beskeder i kanalen)'); continue; }
+    let changed = 0;
+    for (let k = 0; k < Math.max(msgs.length, existing.length); k++) {
+      if (k < existing.length && k < msgs.length) {
+        if (existing[k].content !== msgs[k]) { await api('PATCH', `/channels/${id}/messages/${existing[k].id}`, { content: msgs[k] }); changed++; }
+      } else if (k < msgs.length) {
+        const m = await api('POST', `/channels/${id}/messages`, { content: msgs[k], allowed_mentions: { parse: [] } });
+        if (k === 0) await api('PUT', `/channels/${id}/pins/${m.id}`);
+        changed++;
+      } else { await api('DELETE', `/channels/${id}/messages/${existing[k].id}`); changed++; }
     }
-    for (const [i, content] of msgs.entries()) {
-      const m = await api('POST', `/channels/${id}/messages`, { content, allowed_mentions: { parse: [] } });
-      if (i === 0) await api('PUT', `/channels/${id}/pins/${m.id}`);
-    }
-    console.log('  + beskeder i', name);
+    console.log(changed ? '  ~ opdateret' : '  = uændret', name);
   }
 
   await api('PUT', `/guilds/${G}/members/${OWNER_ID}/roles/${role['Gruppe 1']}`);

@@ -3,8 +3,11 @@ const { Client, GatewayIntentBits, ActivityType, SlashCommandBuilder, Permission
 const { DISCORD_TOKEN, DISCORD_GUILD_ID } = require('./.mcp.json').mcpServers.discord.env;
 const {
   LINKS_TEXT, DAYS, isoWeek, yearOf, weekText, upcomingDeadlines, uValue, parseLayers,
-  deadlines, saveDeadlines, deadlineLine, planMessages,
+  deadlines, saveDeadlines, deadlineLine, planMessages, withEmojis,
 } = require('./be-data');
+
+// :name: -> the server's custom emoji
+const emo = (guild, text) => withEmojis(text, Object.fromEntries(guild.emojis.cache.map(e => [e.name, e.id])));
 
 const RS = { væg: [0.13, 0.04], tag: [0.10, 0.04], gulv: [0.17, 0.04] }; // DS 418: [Rsi, Rse]
 const n = (x, d = 2) => x.toLocaleString('da-DK', { maximumFractionDigits: d });
@@ -62,7 +65,7 @@ function findDeadline(i) {
 async function syncPlanChannel(guild) {
   const ch = guild.channels.cache.find(c => c.name === 'årsplan-og-afleveringer');
   if (!ch) return;
-  const want = planMessages();
+  const want = planMessages().map(m => emo(guild, m));
   const mine = [...(await ch.messages.fetch({ limit: 50 })).values()]
     .filter(m => m.author.id === client.user.id && m.type === 0).reverse();
   for (let k = 0; k < Math.max(want.length, mine.length); k++) {
@@ -82,12 +85,12 @@ const handlers = {
   afleveringer() {
     const list = upcomingDeadlines(new Date(), 6);
     if (!list.length) return 'Ingen flere afleveringer på årsplanen 🎉';
-    return '## 🔴 Næste afleveringer\n' + list.map(deadlineLine).join('\n');
+    return '## :deadline: Næste afleveringer\n' + list.map(deadlineLine).join('\n');
   },
   async 'aflevering-ny'(i) {
     const rawLink = i.options.getString('link');
     const url = rawLink && validUrl(rawLink);
-    if (rawLink && !url) return eph('❌ Linket skal starte med http:// eller https://');
+    if (rawLink && !url) return eph(':afvist: Linket skal starte med http:// eller https://');
     const list = deadlines();
     const week = i.options.getInteger('uge');
     const d = {
@@ -97,60 +100,60 @@ const handlers = {
     };
     saveDeadlines([...list, d]);
     await syncPlanChannel(i.guild);
-    return eph(`✅ Tilføjet og listen er opdateret:\n${deadlineLine(d)}`);
+    return eph(`:godkendt: Tilføjet og listen er opdateret:\n${deadlineLine(d)}`);
   },
   async 'aflevering-link'(i) {
     const d = findDeadline(i);
-    if (!d) return eph('❌ Fandt ikke afleveringen – vælg den fra listen.');
+    if (!d) return eph(':afvist: Fandt ikke afleveringen – vælg den fra listen.');
     const url = validUrl(i.options.getString('link'));
-    if (!url) return eph('❌ Linket skal starte med http:// eller https://');
+    if (!url) return eph(':afvist: Linket skal starte med http:// eller https://');
     const list = deadlines();
     list.find(x => x.id === d.id).links.push({ name: cleanName(i.options.getString('linknavn'), 'Link'), url });
     saveDeadlines(list);
     await syncPlanChannel(i.guild);
-    return eph(`✅ Link tilføjet og listen er opdateret:\n${deadlineLine(list.find(x => x.id === d.id))}`);
+    return eph(`:godkendt: Link tilføjet og listen er opdateret:\n${deadlineLine(list.find(x => x.id === d.id))}`);
   },
   async 'aflevering-slet'(i) {
     const d = findDeadline(i);
-    if (!d) return eph('❌ Fandt ikke afleveringen – vælg den fra listen.');
+    if (!d) return eph(':afvist: Fandt ikke afleveringen – vælg den fra listen.');
     saveDeadlines(deadlines().filter(x => x.id !== d.id));
     await syncPlanChannel(i.guild);
-    return eph(`🗑️ Slettet og listen er opdateret: ${label(d)}`);
+    return eph(`:afvist: Slettet og listen er opdateret: ${label(d)}`);
   },
   links: () => LINKS_TEXT,
   uvaerdi(i) {
     const layers = parseLayers(i.options.getString('lag'));
-    if (!layers) return { content: 'Kunne ikke læse lagene. Skriv `tykkelse_mm lambda` adskilt med `;`, fx `108 0,037; 15 0,25`.', flags: MessageFlags.Ephemeral };
+    if (!layers) return { content: ':afvist: Kunne ikke læse lagene. Skriv `tykkelse_mm lambda` adskilt med `;`, fx `108 0,037; 15 0,25`.', flags: MessageFlags.Ephemeral };
     const part = i.options.getString('bygningsdel') ?? 'væg';
     const [rsi, rse] = RS[part];
     const { R, U } = uValue(layers, rsi, rse);
     const rows = layers.map(l => `• ${l.mm} mm, λ = ${n(l.lambda, 3)} → R = ${n(l.mm / 1000 / l.lambda, 3)} m²K/W`);
-    return `## U-værdi (${part})\nRsi = ${n(rsi)} · Rse = ${n(rse)}\n${rows.join('\n')}\n**R_total = ${n(R, 3)} m²K/W → U = ${n(U, 3)} W/m²K**`;
+    return `## :uvaerdi: U-værdi (${part})\nRsi = ${n(rsi)} · Rse = ${n(rse)}\n${rows.join('\n')}\n**R_total = ${n(R, 3)} m²K/W → U = ${n(U, 3)} W/m²K**`;
   },
   varmetab(i) {
     const u = i.options.getNumber('u'), a = i.options.getNumber('areal');
     const ti = i.options.getNumber('inde') ?? 20, te = i.options.getNumber('ude') ?? -12;
     const phi = u * a * (ti - te);
-    return `## Varmetab\nΦ = U · A · Δt = ${n(u, 3)} · ${n(a)} · (${n(ti)} − (${n(te)})) = **${n(phi, 1)} W**`;
+    return `## :flamme: Varmetab\nΦ = U · A · Δt = ${n(u, 3)} · ${n(a)} · (${n(ti)} − (${n(te)})) = **${n(phi, 1)} W**`;
   },
 };
 
 const WELCOMES = [
-  '🏗️ {u} er lige landet på byggepladsen! Husk sikkerhedshjelmen.',
-  '🧱 Nyt fundament er støbt: {u} er med! Serverens U-værdi er lige blevet bedre.',
-  '⚡ {u} er tilsluttet nettet – energirammen er stadig overholdt.',
-  '📐 {u} er tegnet ind på plantegningen. Velkommen!',
-  '🔨 Byggemester melder: {u} er mødt op. Hent en hammer og find en stige!',
-  '🪵 {u} er spærret inde hos os nu. Der er ingen vej ud. Velkommen! 🏠',
-  '🌡️ Varmetabet faldt lige: {u} er kommet ind i varmen!',
-  '🦺 Hjelm på, {u}! Du er nu officielt en del af byggeholdet.',
-  '📏 {u} er målt op og godkendt efter BR18. Velkommen indenfor!',
-  '🚧 Pas på! {u} er kørt ind på byggepladsen med fuld fart.',
+  ':kran: {u} er lige landet på byggepladsen! Husk sikkerhedshjelmen.',
+  ':mursten: Nyt fundament er støbt: {u} er med! Serverens U-værdi er lige blevet bedre.',
+  ':energi: {u} er tilsluttet nettet – energirammen er stadig overholdt.',
+  ':tegning: {u} er tegnet ind på plantegningen. Velkommen!',
+  ':hammer: Byggemester melder: {u} er mødt op. Hent en hammer og find en stige!',
+  ':planke: {u} er spærret inde hos os nu. Der er ingen vej ud. Velkommen! :hus:',
+  ':termometer: Varmetabet faldt lige: {u} er kommet ind i varmen!',
+  ':vest: Hjelm på, {u}! Du er nu officielt en del af byggeholdet.',
+  ':maalebaand: {u} er målt op og godkendt efter BR18. Velkommen indenfor!',
+  ':kegle: Pas på! {u} er kørt ind på byggepladsen med fuld fart.',
 ];
 const welcomeText = (userId, rnd = Math.random()) =>
   WELCOMES[Math.floor(rnd * WELCOMES.length)].replace('{u}', `<@${userId}>`);
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildExpressions] });
 
 const welcomed = new Set(); // user ids that already have a welcome in #medlemmer
 const findChannel = (guild, name) => guild.channels.cache.find(c => c.name === name);
@@ -161,7 +164,7 @@ async function welcome(member) {
   if (member.user.bot || welcomed.has(member.id)) return;
   welcomed.add(member.id); // mark first so the join event and the sweep never both post
   await ch.send({
-    content: `${welcomeText(member.id)}\nFind din gruppe i ${findChannel(member.guild, 'info') ?? '#info'} og sig hej i #general 👋`,
+    content: emo(member.guild, `${welcomeText(member.id)}\nFind din gruppe i ${findChannel(member.guild, 'info') ?? '#info'} og sig hej i #general :grin:`),
     allowedMentions: { users: [member.id] },
   }).catch(e => { welcomed.delete(member.id); console.error('velkomst fejlede:', e.message); });
 }
@@ -217,14 +220,15 @@ client.on('interactionCreate', async i => {
   if (!i.isChatInputCommand() || !handlers[i.commandName]) return;
   // Discord hides admin commands already; check again here so a misconfigured permission can't open them up
   if (ADMIN_COMMANDS.has(i.commandName) && !i.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
-    return i.reply(eph('Kun for admins 🔒'));
+    return i.reply(eph(emo(i.guild, 'Kun for admins :vaerktoejskasse:')));
   }
   try {
     const out = await handlers[i.commandName](i);
-    await i.reply(typeof out === 'string' ? { content: out, allowedMentions: { parse: [] } } : out);
+    const reply = typeof out === 'string' ? { content: out, allowedMentions: { parse: [] } } : out;
+    await i.reply({ ...reply, content: emo(i.guild, reply.content) });
   } catch (e) {
     console.error(e);
-    if (!i.replied) await i.reply({ content: 'Noget gik galt 😬', flags: MessageFlags.Ephemeral }).catch(() => {});
+    if (!i.replied) await i.reply({ content: emo(i.guild, ':panik: Noget gik galt'), flags: MessageFlags.Ephemeral }).catch(() => {});
   }
 });
 
