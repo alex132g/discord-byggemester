@@ -2,7 +2,7 @@
 const crypto = require('crypto');
 const {
   Client, GatewayIntentBits, ActivityType, SlashCommandBuilder, PermissionFlagsBits, MessageFlags,
-  AttachmentBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle,
+  AttachmentBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder,
   GuildScheduledEventEntityType, GuildScheduledEventPrivacyLevel,
 } = require('discord.js');
 const { DISCORD_TOKEN, DISCORD_GUILD_ID } = require('./.mcp.json').mcpServers.discord.env;
@@ -86,10 +86,15 @@ async function syncPlanChannel(guild) {
   for (let k = 0; k < Math.max(want.length, mine.length); k++) {
     const old = mine[k];
     if (k === 0) {
-      if (old && old.content === want[0] && old.attachments.size) continue;
+      const components = calendarControls(guild);
+      const sameControls = old && JSON.stringify(old.components.map(c => c.toJSON())) === JSON.stringify(components.map(c => c.toJSON()));
+      if (old && old.content === want[0] && old.attachments.size) {
+        if (!sameControls) await old.edit({ components }); // only the buttons changed: no need to redraw
+        continue;
+      }
       const files = [new AttachmentBuilder(await renderCalendar({ view: 'year', today, list }), { name: 'kalender.png' })];
-      if (old) await old.edit({ content: want[0], files, attachments: [] });
-      else await ch.send({ content: want[0], files, allowedMentions: { parse: [] } });
+      if (old) await old.edit({ content: want[0], files, attachments: [], components });
+      else await ch.send({ content: want[0], files, components, allowedMentions: { parse: [] } });
     } else if (old && k < want.length) {
       if (old.content !== want[k] || old.attachments.size) await old.edit({ content: want[k], attachments: [] });
     } else if (k < want.length) await ch.send({ content: want[k], allowedMentions: { parse: [] } });
@@ -149,8 +154,55 @@ const syncAll = guild => (syncing = syncing.then(async () => {
   await syncEvents(guild).catch(e => console.error('events fejlede:', e.message));
 }));
 
+// Controls under the shared year calendar. They use the "kalpub:" prefix: clicking opens a private view
+// for the clicker and never changes the shared message (the private month view uses "kal:" and updates itself).
+function calendarControls(guild) {
+  const e = name => { const x = guild.emojis.cache.find(em => em.name === name); return x ? { id: x.id, name: x.name } : undefined; };
+  const button = (id, label, emoji, style = ButtonStyle.Secondary) => {
+    const b = new ButtonBuilder().setCustomId(id).setLabel(label).setStyle(style);
+    return e(emoji) ? b.setEmoji(e(emoji)) : b;
+  };
+  return [
+    new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('kalpub:month')
+      .setPlaceholder('📅 Vælg en måned og se den i stort format…')
+      .addOptions(SCHOOL_MONTHS.map(([y, m]) => ({ label: `${MONTHS[m]} ${y}`, value: `${y}-${m}` })))),
+    new ActionRowBuilder().addComponents(
+      button('kalpub:now', 'Denne måned', 'gantt', ButtonStyle.Primary),
+      button('kalpub:week', 'Denne uge', 'tegning'),
+      button('kalpub:next', 'Næste aflevering', 'deadline', ButtonStyle.Danger)),
+  ];
+}
+
+const WEEKDAYS = ['søndag', 'mandag', 'tirsdag', 'onsdag', 'torsdag', 'fredag', 'lørdag'];
+const longDate = d => `${WEEKDAYS[d.getUTCDay()]} ${d.getUTCDate()}. ${MONTHS[d.getUTCMonth()].toLowerCase()}`;
+const daysUntil = d => Math.round((d - Date.parse(todayCph() + 'T00:00:00Z')) / 864e5);
+const inDays = n => (n === 0 ? '**i dag!**' : n === 1 ? '**i morgen!**' : `om **${n} dage**`);
+
+// Private answers to the controls under the shared calendar
+async function calendarPublicAnswer(i) {
+  const what = i.customId.slice('kalpub:'.length);
+  if (what === 'month') return calendarReply(i.values[0]);
+  if (what === 'now') return calendarReply(currentMonthKey());
+  if (what === 'week') {
+    const now = isoWeek(new Date());
+    const due = deadlines().filter(d => d.week === now.week && d.year === now.year);
+    const plan = weekText(now.week, now.year) ?? `**Uge ${now.week}:** står ikke på årsplanen`;
+    const dueTxt = due.length ? `\n\n## :deadline: Afleveringer denne uge\n${due.map(deadlineLine).join('\n')}` : '\n\n:godkendt: Ingen afleveringer denne uge';
+    return { content: `## :tegning: Denne uge\n${plan}${dueTxt}` };
+  }
+  if (what === 'next') {
+    const [d] = upcomingDeadlines(new Date(), 50).filter(x => daysUntil(dateOf(x.year, x.week, x.day)) >= 0);
+    if (!d) return { content: ':grin: Ingen flere afleveringer i år!' };
+    const date = dateOf(d.year, d.week, d.day);
+    const head = `## :deadline: Næste aflevering\n**${d.text}**\n:gantt: ${longDate(date)} (uge ${d.week}) – ${inDays(daysUntil(date))}`
+      + d.links.map(l => `\n:laptop: [${l.name}](<${l.url}>)`).join('');
+    return calendarReply(`${date.getUTCFullYear()}-${date.getUTCMonth()}`, head);
+  }
+  return { content: ':panik: Ukendt knap' };
+}
+
 // Month calendar reply with ◀ ▶ buttons; key = "YYYY-M" (month index 0-11)
-async function calendarReply(key) {
+async function calendarReply(key, content = '') {
   const keys = SCHOOL_MONTHS.map(([y, m]) => `${y}-${m}`);
   const idx = Math.max(0, keys.indexOf(key));
   const [y, m] = SCHOOL_MONTHS[idx];
@@ -159,7 +211,7 @@ async function calendarReply(key) {
     .setCustomId(k ? `kal:${k}` : `kal:none-${id}`).setDisabled(!k);
   const prev = keys[idx - 1], next = keys[idx + 1];
   return {
-    content: '', attachments: [],
+    content, attachments: [],
     files: [new AttachmentBuilder(png, { name: `kalender-${y}-${m + 1}.png` })],
     components: [new ActionRowBuilder().addComponents(
       btn(prev, `◀ ${prev ? MONTHS[SCHOOL_MONTHS[idx - 1][1]] : ''}`.trim(), 'prev'),
@@ -309,6 +361,17 @@ client.on('interactionCreate', async i => {
     const choices = deadlines().filter(d => label(d).toLowerCase().includes(q)).slice(0, 25)
       .map(d => ({ name: label(d), value: String(d.id) }));
     return i.respond(choices).catch(() => {});
+  }
+  // Controls under the shared year calendar: always answer privately, never touch the shared message
+  if ((i.isButton() || i.isStringSelectMenu()) && i.customId.startsWith('kalpub:')) {
+    try {
+      await i.deferReply({ flags: MessageFlags.Ephemeral });
+      const r = await calendarPublicAnswer(i);
+      return await i.editReply({ ...r, content: emo(i.guild, r.content ?? '') });
+    } catch (e) {
+      console.error('kalender-knap fejlede:', e);
+      return i.editReply({ content: emo(i.guild, ':panik: Noget gik galt med kalenderen') }).catch(() => {});
+    }
   }
   // /kalender and its ◀ ▶ buttons: drawing takes a moment, so defer first (Discord wants an answer within 3 s)
   const isCalCmd = i.isChatInputCommand() && i.commandName === 'kalender';
