@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1d3b6b"/>
+      <stop offset="1" stop-color="#0f2140"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <!-- ground line -->
+  <line x1="70" y1="392" x2="442" y2="392" stroke="#9fb6d9" stroke-width="10" stroke-linecap="round"/>
+  <!-- house walls -->
+  <rect x="120" y="232" width="272" height="160" fill="none" stroke="#ffffff" stroke-width="16" stroke-linejoin="round"/>
+  <!-- roof / truss -->
+  <polyline points="92,248 256,112 420,248" fill="none" stroke="#ffffff" stroke-width="18" stroke-linejoin="round" stroke-linecap="round"/>
+  <line x1="120" y1="232" x2="392" y2="232" stroke="#ffffff" stroke-width="10"/>
+  <line x1="256" y1="112" x2="256" y2="232" stroke="#9fb6d9" stroke-width="8"/>
+  <line x1="188" y1="232" x2="256" y2="172" stroke="#9fb6d9" stroke-width="8"/>
+  <line x1="324" y1="232" x2="256" y2="172" stroke="#9fb6d9" stroke-width="8"/>
+  <!-- lightning bolt -->
+  <polygon points="282,248 206,330 252,330 228,404 316,306 268,306 298,248" fill="#ffc83d" stroke="#0f2140" stroke-width="6" stroke-linejoin="round"/>
+  <!-- label -->
+  <text x="256" y="470" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="58" font-weight="800" fill="#ffc83d" letter-spacing="4">B&amp;E</text>
+</svg>
