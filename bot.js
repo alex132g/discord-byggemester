@@ -1,7 +1,10 @@
 // Byggemester: keeps the bot online and answers slash commands. Run: node bot.js
-const { Client, GatewayIntentBits, ActivityType, SlashCommandBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, ActivityType, SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const { DISCORD_TOKEN, DISCORD_GUILD_ID } = require('./.mcp.json').mcpServers.discord.env;
-const { LINKS_TEXT, isoWeek, weekText, upcomingDeadlines, uValue, parseLayers } = require('./be-data');
+const {
+  LINKS_TEXT, DAYS, isoWeek, yearOf, weekText, upcomingDeadlines, uValue, parseLayers,
+  deadlines, saveDeadlines, deadlineLine, planMessages,
+} = require('./be-data');
 
 const RS = { væg: [0.13, 0.04], tag: [0.10, 0.04], gulv: [0.17, 0.04] }; // DS 418: [Rsi, Rse]
 const n = (x, d = 2) => x.toLocaleString('da-DK', { maximumFractionDigits: d });
@@ -21,19 +24,98 @@ const commands = [
     .addNumberOption(o => o.setName('areal').setDescription('Areal [m²]').setRequired(true).setMinValue(0))
     .addNumberOption(o => o.setName('inde').setDescription('Indetemperatur °C (standard 20)'))
     .addNumberOption(o => o.setName('ude').setDescription('Udetemperatur °C (standard -12)')),
+  // Admin commands: hidden from everyone without Administrator, replies only visible to the admin
+  new SlashCommandBuilder().setName('aflevering-ny').setDescription('Admin: tilføj en aflevering')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addIntegerOption(o => o.setName('uge').setDescription('Ugenummer').setRequired(true).setMinValue(1).setMaxValue(53))
+    .addStringOption(o => o.setName('dag').setDescription('Ugedag').setRequired(true)
+      .addChoices(...DAYS.map(d => ({ name: d, value: d }))))
+    .addStringOption(o => o.setName('titel').setDescription('Hvad skal afleveres').setRequired(true).setMaxLength(150))
+    .addStringOption(o => o.setName('link').setDescription('Link til opgaven (valgfri)'))
+    .addStringOption(o => o.setName('linknavn').setDescription('Tekst på linket (standard: Opgave)').setMaxLength(40)),
+  new SlashCommandBuilder().setName('aflevering-link').setDescription('Admin: tilføj et link til en aflevering')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addStringOption(o => o.setName('aflevering').setDescription('Vælg aflevering').setRequired(true).setAutocomplete(true))
+    .addStringOption(o => o.setName('link').setDescription('URL').setRequired(true))
+    .addStringOption(o => o.setName('linknavn').setDescription('Tekst på linket (standard: Link)').setMaxLength(40)),
+  new SlashCommandBuilder().setName('aflevering-slet').setDescription('Admin: slet en aflevering')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addStringOption(o => o.setName('aflevering').setDescription('Vælg aflevering').setRequired(true).setAutocomplete(true)),
 ].map(c => c.toJSON());
+
+const ADMIN_COMMANDS = new Set(['aflevering-ny', 'aflevering-link', 'aflevering-slet']);
+const eph = content => ({ content, ephemeral: true, allowedMentions: { parse: [] } });
+const label = d => `Uge ${d.week} ${d.day} – ${d.text}`.slice(0, 100);
+
+function validUrl(s) {
+  try { const u = new URL(s); return ['http:', 'https:'].includes(u.protocol) ? u.href : null; } catch { return null; }
+}
+// Link names go inside [..] in markdown, so strip brackets that would break the link
+const cleanName = (s, fallback) => (s ?? fallback).replace(/[[\]()<>]/g, '').trim() || fallback;
+
+function findDeadline(i) {
+  const id = Number(i.options.getString('aflevering'));
+  return deadlines().find(d => d.id === id);
+}
+
+// Makes the bot's messages in #årsplan-og-afleveringer match planMessages(): edit, add or remove as needed
+async function syncPlanChannel(guild) {
+  const ch = guild.channels.cache.find(c => c.name === 'årsplan-og-afleveringer');
+  if (!ch) return;
+  const want = planMessages();
+  const mine = [...(await ch.messages.fetch({ limit: 50 })).values()]
+    .filter(m => m.author.id === client.user.id && m.type === 0).reverse();
+  for (let k = 0; k < Math.max(want.length, mine.length); k++) {
+    if (k < mine.length && k < want.length) { if (mine[k].content !== want[k]) await mine[k].edit({ content: want[k] }); }
+    else if (k < want.length) await ch.send({ content: want[k], allowedMentions: { parse: [] } });
+    else await mine[k].delete();
+  }
+}
 
 const handlers = {
   uge(i) {
     const now = isoWeek(new Date());
     const week = i.options.getInteger('nummer') ?? now.week;
-    const year = i.options.getInteger('nummer') ? (week >= 33 ? 2026 : 2027) : now.year;
+    const year = i.options.getInteger('nummer') ? yearOf(week) : now.year;
     return weekText(week, year) ?? `Uge ${week} står ikke på årsplanen (ferie eller uden for skoleåret).`;
   },
   afleveringer() {
     const list = upcomingDeadlines(new Date(), 6);
     if (!list.length) return 'Ingen flere afleveringer på årsplanen 🎉';
-    return '## 🔴 Næste afleveringer\n' + list.map(([w, , day, text]) => `• **Uge ${w} ${day}:** ${text}`).join('\n');
+    return '## 🔴 Næste afleveringer\n' + list.map(deadlineLine).join('\n');
+  },
+  async 'aflevering-ny'(i) {
+    const rawLink = i.options.getString('link');
+    const url = rawLink && validUrl(rawLink);
+    if (rawLink && !url) return eph('❌ Linket skal starte med http:// eller https://');
+    const list = deadlines();
+    const week = i.options.getInteger('uge');
+    const d = {
+      id: Math.max(0, ...list.map(x => x.id)) + 1, week, year: yearOf(week), day: i.options.getString('dag'),
+      text: i.options.getString('titel').trim(),
+      links: url ? [{ name: cleanName(i.options.getString('linknavn'), 'Opgave'), url }] : [],
+    };
+    saveDeadlines([...list, d]);
+    await syncPlanChannel(i.guild);
+    return eph(`✅ Tilføjet og listen er opdateret:\n${deadlineLine(d)}`);
+  },
+  async 'aflevering-link'(i) {
+    const d = findDeadline(i);
+    if (!d) return eph('❌ Fandt ikke afleveringen – vælg den fra listen.');
+    const url = validUrl(i.options.getString('link'));
+    if (!url) return eph('❌ Linket skal starte med http:// eller https://');
+    const list = deadlines();
+    list.find(x => x.id === d.id).links.push({ name: cleanName(i.options.getString('linknavn'), 'Link'), url });
+    saveDeadlines(list);
+    await syncPlanChannel(i.guild);
+    return eph(`✅ Link tilføjet og listen er opdateret:\n${deadlineLine(list.find(x => x.id === d.id))}`);
+  },
+  async 'aflevering-slet'(i) {
+    const d = findDeadline(i);
+    if (!d) return eph('❌ Fandt ikke afleveringen – vælg den fra listen.');
+    saveDeadlines(deadlines().filter(x => x.id !== d.id));
+    await syncPlanChannel(i.guild);
+    return eph(`🗑️ Slettet og listen er opdateret: ${label(d)}`);
   },
   links: () => LINKS_TEXT,
   uvaerdi(i) {
@@ -113,9 +195,19 @@ client.once('clientReady', async () => {
 });
 
 client.on('interactionCreate', async i => {
+  if (i.isAutocomplete()) {
+    const q = i.options.getFocused().toLowerCase();
+    const choices = deadlines().filter(d => label(d).toLowerCase().includes(q)).slice(0, 25)
+      .map(d => ({ name: label(d), value: String(d.id) }));
+    return i.respond(choices).catch(() => {});
+  }
   if (!i.isChatInputCommand() || !handlers[i.commandName]) return;
+  // Discord hides admin commands already; check again here so a misconfigured permission can't open them up
+  if (ADMIN_COMMANDS.has(i.commandName) && !i.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
+    return i.reply(eph('Kun for admins 🔒'));
+  }
   try {
-    const out = handlers[i.commandName](i);
+    const out = await handlers[i.commandName](i);
     await i.reply(typeof out === 'string' ? { content: out, allowedMentions: { parse: [] } } : out);
   } catch (e) {
     console.error(e);

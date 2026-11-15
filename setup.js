@@ -9,7 +9,7 @@ const { DISCORD_TOKEN, DISCORD_GUILD_ID: G } = require('./.mcp.json').mcpServers
 const DRY = process.argv.includes('--dry-run');
 const OWNER_ID = '687290274094776365'; // Alexander
 
-const SEND = 1n << 11n, PUB_THREADS = 1n << 35n, PRIV_THREADS = 1n << 36n, SEND_THREADS = 1n << 38n;
+const VIEW = 1n << 10n, SEND = 1n << 11n, PUB_THREADS = 1n << 35n, PRIV_THREADS = 1n << 36n, SEND_THREADS = 1n << 38n;
 const READ_ONLY = SEND | PUB_THREADS | PRIV_THREADS | SEND_THREADS;
 const TEXT = 0, VOICE = 2, CATEGORY = 4;
 
@@ -39,6 +39,9 @@ const LAYOUT = [
     { name: 'Snak 1', type: VOICE },
     { name: 'Snak 2', type: VOICE },
     { name: '🖥️ Skærmdeling – Revit', type: VOICE },
+  ]},
+  { name: '🔒 ADMIN', private: true, channels: [
+    { name: 'admin', topic: 'Kun for admin. /aflevering-ny · /aflevering-link · /aflevering-slet (svar er kun synlige for dig).' },
   ]},
 ];
 
@@ -115,7 +118,8 @@ const hasHumanMessages = async id => (await api('GET', `/channels/${id}/messages
   const keep = new Set();
   const ids = {};
   for (const [ci, cat] of LAYOUT.entries()) {
-    const overwrites = cat.readOnly ? [{ id: G, type: 0, allow: '0', deny: String(READ_ONLY) }] : [];
+    const overwrites = cat.readOnly ? [{ id: G, type: 0, allow: '0', deny: String(READ_ONLY) }]
+      : cat.private ? [{ id: G, type: 0, allow: '0', deny: String(VIEW) }] : []; // private: only owner/admins see it
     let catCh = channels.find(x => x.type === CATEGORY && x.name.toUpperCase() === cat.name.toUpperCase());
     if (!catCh) catCh = await api('POST', `/guilds/${G}/channels`, { name: cat.name, type: CATEGORY, position: ci, permission_overwrites: overwrites });
     else await api('PATCH', `/channels/${catCh.id}`, { position: ci, permission_overwrites: overwrites });

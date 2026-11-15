@@ -1,0 +1,82 @@
+[
+  {
+    "id": 1,
+    "week": 36,
+    "year": 2026,
+    "day": "fre",
+    "text": "Detalje 1 (fundament, ydermur, terrændæk)",
+    "links": []
+  },
+  {
+    "id": 2,
+    "week": 38,
+    "year": 2026,
+    "day": "man",
+    "text": "Individuel aflevering af egen plantegning",
+    "links": []
+  },
+  {
+    "id": 3,
+    "week": 40,
+    "year": 2026,
+    "day": "man",
+    "text": "Skitseprojekt",
+    "links": []
+  },
+  {
+    "id": 4,
+    "week": 41,
+    "year": 2026,
+    "day": "fre",
+    "text": "Detalje 2 (tagdetalje) – gruppeaflevering",
+    "links": []
+  },
+  {
+    "id": 5,
+    "week": 44,
+    "year": 2026,
+    "day": "tir",
+    "text": "Afløbsinstallation – gruppeaflevering",
+    "links": []
+  },
+  {
+    "id": 6,
+    "week": 1,
+    "year": 2027,
+    "day": "tir",
+    "text": "Oplæg til teknikfagspræsentation",
+    "links": []
+  },
+  {
+    "id": 7,
+    "week": 1,
+    "year": 2027,
+    "day": "fre",
+    "text": "Teknikfagspræsentation",
+    "links": []
+  },
+  {
+    "id": 8,
+    "week": 6,
+    "year": 2027,
+    "day": "man",
+    "text": "Udlevering af oplæg til eksamensprojekt",
+    "links": []
+  },
+  {
+    "id": 9,
+    "week": 6,
+    "year": 2027,
+    "day": "fre",
+    "text": "Godkendt problemformulering",
+    "links": []
+  },
+  {
+    "id": 10,
+    "week": 9,
+    "year": 2027,
+    "day": "man",
+    "text": "Terminsprøve",
+    "links": []
+  }
+]
