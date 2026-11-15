@@ -17,6 +17,7 @@ const TEXT = 0, VOICE = 2, CATEGORY = 4;
 const ROLES = [
   { name: 'Gruppe 1', color: 0xf28c28 },
   { name: 'Gruppe 2', color: 0x3b82f6 },
+  { name: 'BE medlem', color: 0x1f8b4c }, // bot.js gives this to everyone who joins
 ];
 const REMOVE_ROLES = ['BE-klassen'];
 
@@ -104,8 +105,8 @@ const hasHumanMessages = async id => (await api('GET', `/channels/${id}/messages
   const existingRoles = await api('GET', `/guilds/${G}/roles`);
   const role = {};
   for (const r of ROLES) {
-    const found = existingRoles.find(x => x.name === r.name);
-    role[r.name] = found ? found.id : (await api('POST', `/guilds/${G}/roles`, { ...r, hoist: true, mentionable: true })).id;
+    const found = existingRoles.find(x => x.name.toLowerCase() === r.name.toLowerCase());
+    role[r.name] = found ? found.id : (await api('POST', `/guilds/${G}/roles`, { hoist: true, mentionable: true, ...r })).id;
     console.log(found ? '  = rolle' : '  + rolle', r.name);
   }
   for (const name of REMOVE_ROLES) {

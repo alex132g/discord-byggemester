@@ -1,5 +1,5 @@
 // Byggemester: keeps the bot online and answers slash commands. Run: node bot.js
-const { Client, GatewayIntentBits, ActivityType, SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const { Client, GatewayIntentBits, ActivityType, SlashCommandBuilder, PermissionFlagsBits, MessageFlags } = require('discord.js');
 const { DISCORD_TOKEN, DISCORD_GUILD_ID } = require('./.mcp.json').mcpServers.discord.env;
 const {
   LINKS_TEXT, DAYS, isoWeek, yearOf, weekText, upcomingDeadlines, uValue, parseLayers,
@@ -44,7 +44,7 @@ const commands = [
 ].map(c => c.toJSON());
 
 const ADMIN_COMMANDS = new Set(['aflevering-ny', 'aflevering-link', 'aflevering-slet']);
-const eph = content => ({ content, ephemeral: true, allowedMentions: { parse: [] } });
+const eph = content => ({ content, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
 const label = d => `Uge ${d.week} ${d.day} – ${d.text}`.slice(0, 100);
 
 function validUrl(s) {
@@ -120,7 +120,7 @@ const handlers = {
   links: () => LINKS_TEXT,
   uvaerdi(i) {
     const layers = parseLayers(i.options.getString('lag'));
-    if (!layers) return { content: 'Kunne ikke læse lagene. Skriv `tykkelse_mm lambda` adskilt med `;`, fx `108 0,037; 15 0,25`.', ephemeral: true };
+    if (!layers) return { content: 'Kunne ikke læse lagene. Skriv `tykkelse_mm lambda` adskilt med `;`, fx `108 0,037; 15 0,25`.', flags: MessageFlags.Ephemeral };
     const part = i.options.getString('bygningsdel') ?? 'væg';
     const [rsi, rse] = RS[part];
     const { R, U } = uValue(layers, rsi, rse);
@@ -177,13 +177,26 @@ async function sweep() {
     if (batch.size < 100) break;
     before = batch.last().id;
   }
-  const missing = (await guild.members.fetch())
+  const members = await guild.members.fetch();
+  for (const m of members.values()) await giveMemberRole(m); // also catches joins while the bot was offline
+  const missing = members
     .filter(m => !m.user.bot && !welcomed.has(m.id) && m.joinedTimestamp > ch.createdTimestamp);
   for (const m of missing.values()) await welcome(m);
   console.log(`${new Date().toISOString()} tjek af nye medlemmer: ${missing.size} velkomst(er) sendt`);
 }
 
-client.on('guildMemberAdd', welcome);
+const MEMBER_ROLE = 'BE medlem';
+async function giveMemberRole(member) {
+  const r = member.guild.roles.cache.find(x => x.name.toLowerCase() === MEMBER_ROLE.toLowerCase());
+  if (!r) return console.error(`rollen "${MEMBER_ROLE}" mangler - kør node setup.js`);
+  if (member.user.bot || member.roles.cache.has(r.id)) return;
+  await member.roles.add(r).catch(e => console.error('rolle fejlede:', member.user.tag, e.message));
+}
+
+client.on('guildMemberAdd', async member => {
+  await giveMemberRole(member);
+  await welcome(member);
+});
 
 client.once('clientReady', async () => {
   client.user.setPresence({ activities: [{ name: 'Byggeri & Energi · /uge', type: ActivityType.Watching }], status: 'online' });
@@ -211,7 +224,7 @@ client.on('interactionCreate', async i => {
     await i.reply(typeof out === 'string' ? { content: out, allowedMentions: { parse: [] } } : out);
   } catch (e) {
     console.error(e);
-    if (!i.replied) await i.reply({ content: 'Noget gik galt 😬', ephemeral: true }).catch(() => {});
+    if (!i.replied) await i.reply({ content: 'Noget gik galt 😬', flags: MessageFlags.Ephemeral }).catch(() => {});
   }
 });
 
