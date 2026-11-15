@@ -202,4 +202,5 @@ async function main() {
     catch (e) { console.log('  !', name, e.message); }
   }
 }
-main().catch(e => { console.error('FEJL:', e.message); process.exit(1); });
+module.exports = { ICONS, CHROME }; // reused by stickers.js
+if (require.main === module) main().catch(e => { console.error('FEJL:', e.message); process.exit(1); });
