@@ -70,21 +70,46 @@ const welcomeText = (userId, rnd = Math.random()) =>
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
 
-client.on('guildMemberAdd', async member => {
-  if (member.user.bot) return;
-  const ch = member.guild.channels.cache.find(c => c.name === 'medlemmer');
-  const info = member.guild.channels.cache.find(c => c.name === 'info');
+const welcomed = new Set(); // user ids that already have a welcome in #medlemmer
+const findChannel = (guild, name) => guild.channels.cache.find(c => c.name === name);
+
+async function welcome(member) {
+  const ch = findChannel(member.guild, 'medlemmer');
   if (!ch) return console.error('kanal #medlemmer mangler');
+  if (member.user.bot || welcomed.has(member.id)) return;
+  welcomed.add(member.id); // mark first so the join event and the sweep never both post
   await ch.send({
-    content: `${welcomeText(member.id)}\nFind din gruppe i ${info ?? '#info'} og sig hej i #general 👋`,
+    content: `${welcomeText(member.id)}\nFind din gruppe i ${findChannel(member.guild, 'info') ?? '#info'} og sig hej i #general 👋`,
     allowedMentions: { users: [member.id] },
-  }).catch(e => console.error('velkomst fejlede:', e.message));
-});
+  }).catch(e => { welcomed.delete(member.id); console.error('velkomst fejlede:', e.message); });
+}
+
+// Welcomes everyone who joined after #medlemmer was created but has no welcome yet (e.g. joined while the PC was off)
+async function sweep() {
+  const guild = client.guilds.cache.get(DISCORD_GUILD_ID);
+  const ch = findChannel(guild, 'medlemmer');
+  if (!ch) return;
+  for (let before; ;) {
+    const batch = await ch.messages.fetch({ limit: 100, before });
+    for (const m of batch.values()) if (m.author.id === client.user.id) m.mentions.users.forEach(u => welcomed.add(u.id));
+    if (batch.size < 100) break;
+    before = batch.last().id;
+  }
+  const missing = (await guild.members.fetch())
+    .filter(m => !m.user.bot && !welcomed.has(m.id) && m.joinedTimestamp > ch.createdTimestamp);
+  for (const m of missing.values()) await welcome(m);
+  console.log(`${new Date().toISOString()} tjek af nye medlemmer: ${missing.size} velkomst(er) sendt`);
+}
+
+client.on('guildMemberAdd', welcome);
 
 client.once('clientReady', async () => {
   client.user.setPresence({ activities: [{ name: 'Byggeri & Energi · /uge', type: ActivityType.Watching }], status: 'online' });
   await client.guilds.cache.get(DISCORD_GUILD_ID).commands.set(commands); // guild commands update instantly
   console.log(`${new Date().toISOString()} online som ${client.user.tag}, ${commands.length} commands`);
+  const safeSweep = () => sweep().catch(e => console.error('tjek fejlede:', e.message));
+  safeSweep();
+  setInterval(safeSweep, 30 * 60 * 1000); // every 30 min
 });
 
 client.on('interactionCreate', async i => {
